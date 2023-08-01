@@ -53,11 +53,17 @@ public class FloatDotProductBenchmark {
       buf.order(LITTLE_ENDIAN);
       buf.asFloatBuffer().put(0, tmpA);
       buf.asFloatBuffer().put(size, tmpB);
-      int n = fc.write(buf);
-      assert n == size * 2 * Float.BYTES;
+      int n = fc.write(ByteBuffer.wrap(new byte[] { 0x00 }));
+      if (n != 1) {
+        throw new AssertionError("expected n=1, got:" + n);
+      }
+      n = fc.write(buf);
+      if (n != size * 2 * Float.BYTES) {
+        throw new AssertionError("expected n=" + size * 2 * Float.BYTES + ", got:" + n);
+      }
 
       Arena arena = Arena.openShared();
-      segment = fc.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES, arena.scope());
+      segment = fc.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES + 1, arena.scope());
     }
 
     // Thread local buffers
@@ -131,7 +137,7 @@ public class FloatDotProductBenchmark {
 
   @Benchmark
   public float dotProductFromMemorySegment() {
-    return dotProductFromMemorySegment(0, size * Float.BYTES);
+    return dotProductFromMemorySegment(1, size * Float.BYTES + 1);
   }
 
   private float dotProductFromMemorySegment(long segmentOffset1, long segmentOffset2) {

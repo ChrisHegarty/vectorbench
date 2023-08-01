@@ -61,6 +61,7 @@
                     <showWarnings>true</showWarnings>
                     <showDeprecation>true</showDeprecation>
                     <compilerArgs>
+                      <arg>--enable-preview</arg>
                       <arg>--add-modules</arg><arg>jdk.incubator.vector</arg>
                     </compilerArgs>
                 </configuration>
