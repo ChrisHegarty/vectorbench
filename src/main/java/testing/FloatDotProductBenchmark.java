@@ -72,7 +72,7 @@ public class FloatDotProductBenchmark {
 
     float f1 = dotProductCopyFromArray();
     float f2 = dotProductFromMemorySegment();
-    if (Math.abs(f1 - f2) > 0.0001) {
+    if (Math.abs(f1 - f2) > 0.0001 || Float.isNaN(Math.abs(f1 - f2))) {
       throw new AssertionError(f1 + " != " + f2);
     }
   }
@@ -86,8 +86,8 @@ public class FloatDotProductBenchmark {
   public float dotProductCopyFromArray() {
     // loads vector data from the backing memory segment into the float arrays,
     // in the same way as that of Lucene's MemorySegmentIndexInput.
-    MemorySegment.copy(segment, LAYOUT_LE_FLOAT, 0, a, 0, size);
-    MemorySegment.copy(segment, LAYOUT_LE_FLOAT, (long) size * Float.BYTES, b, 0, size);
+    MemorySegment.copy(segment, LAYOUT_LE_FLOAT, 1, a, 0, size);
+    MemorySegment.copy(segment, LAYOUT_LE_FLOAT, (long) size * Float.BYTES + 1, b, 0, size);
 
     if (a.length != b.length) {
       throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
