@@ -31,7 +31,7 @@ public class FloatDotProductBenchmark {
   private float[] a;
   private float[] b;
 
-  private MemorySegment segment;
+  private MemorySegment alignedSegment, unalignedSegment;
 
   @Param({"1", "4", "6", "8", "13", "16", "25", "32", "64", "100", "128", "207", "256", "300", "512", "702", "1024"})
   //@Param({"1", "4", "6", "8", "13", "16", "25", "32", "64", "100" })
@@ -47,47 +47,75 @@ public class FloatDotProductBenchmark {
       tmpA[i] = ThreadLocalRandom.current().nextFloat();
       tmpB[i] = ThreadLocalRandom.current().nextFloat();
     }
-    Path p = Path.of("vector.data");
-    try (FileChannel fc = FileChannel.open(p, CREATE, READ, WRITE)) {
+    Path p1 = Path.of("vector1.data");
+    Path p2 = Path.of("vector2.data");
+    try (FileChannel fc1 = FileChannel.open(p1, CREATE, READ, WRITE);
+         FileChannel fc2 = FileChannel.open(p2, CREATE, READ, WRITE)) {
+      Arena arena = Arena.openShared();
       ByteBuffer buf = ByteBuffer.allocate(size * 2 * Float.BYTES);
       buf.order(LITTLE_ENDIAN);
       buf.asFloatBuffer().put(0, tmpA);
       buf.asFloatBuffer().put(size, tmpB);
-      int n = fc.write(ByteBuffer.wrap(new byte[] { 0x00 }));
-      if (n != 1) {
-        throw new AssertionError("expected n=1, got:" + n);
-      }
-      n = fc.write(buf);
+
+      // create the file/segment with aligned data
+      int n = fc1.write(buf);
       if (n != size * 2 * Float.BYTES) {
         throw new AssertionError("expected n=" + size * 2 * Float.BYTES + ", got:" + n);
       }
+      alignedSegment = fc1.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES, arena.scope());
 
-      Arena arena = Arena.openShared();
-      segment = fc.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES + 1, arena.scope());
+      // create the file/segment with unaligned data
+      n = fc2.write(ByteBuffer.wrap(new byte[] { 0x00 }));
+      if (n != 1) {
+        throw new AssertionError("expected n=1, got:" + n);
+      }
+      n = fc2.write(buf.flip());
+      if (n != size * 2 * Float.BYTES) {
+        throw new AssertionError("expected n=" + size * 2 * Float.BYTES + ", got:" + n);
+      }
+      unalignedSegment = fc2.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES + 1, arena.scope());
     }
 
     // Thread local buffers
     a = new float[size];
     b = new float[size];
 
-    float f1 = dotProductCopyFromArray();
-    float f2 = dotProductFromMemorySegment();
+    // sanity
+    float f1 = dotProductCopyFromArrayAligned();
+    float f2 = dotProductFromMemorySegmentAligned();
+    float f3 = dotProductCopyFromArrayUnaligned();
+    float f4 = dotProductFromMemorySegmentUnaligned();
     if (Math.abs(f1 - f2) > 0.0001 || Float.isNaN(Math.abs(f1 - f2))) {
       throw new AssertionError(f1 + " != " + f2);
+    }
+    if (Math.abs(f1 - f3) > 0.0001 || Float.isNaN(Math.abs(f1 - f3))) {
+      throw new AssertionError(f1 + " != " + f3);
+    }
+    if (Math.abs(f1 - f4) > 0.0001 || Float.isNaN(Math.abs(f1 - f4))) {
+      throw new AssertionError(f1 + " != " + f4);
     }
   }
 
   static final VectorSpecies<Float> SPECIES = FloatVector.SPECIES_PREFERRED;
 
-  static final ValueLayout.OfFloat LAYOUT_LE_FLOAT =
+  static final ValueLayout.OfFloat LAYOUT_LE_FLOAT_UNALIGNED =
           ValueLayout.JAVA_FLOAT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
 
   @Benchmark
-  public float dotProductCopyFromArray() {
+  public float dotProductCopyFromArrayAligned() {
+    return dotProductCopyFromArray(alignedSegment, 0);
+  }
+
+  @Benchmark
+  public float dotProductCopyFromArrayUnaligned() {
+    return dotProductCopyFromArray(unalignedSegment, 1);
+  }
+
+  float dotProductCopyFromArray(MemorySegment segment, int offset) {
     // loads vector data from the backing memory segment into the float arrays,
     // in the same way as that of Lucene's MemorySegmentIndexInput.
-    MemorySegment.copy(segment, LAYOUT_LE_FLOAT, 1, a, 0, size);
-    MemorySegment.copy(segment, LAYOUT_LE_FLOAT, (long) size * Float.BYTES + 1, b, 0, size);
+    MemorySegment.copy(segment, LAYOUT_LE_FLOAT_UNALIGNED, offset, a, 0, size);
+    MemorySegment.copy(segment, LAYOUT_LE_FLOAT_UNALIGNED, (long) size * Float.BYTES + offset, b, 0, size);
 
     if (a.length != b.length) {
       throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
@@ -136,11 +164,16 @@ public class FloatDotProductBenchmark {
   }
 
   @Benchmark
-  public float dotProductFromMemorySegment() {
-    return dotProductFromMemorySegment(1, size * Float.BYTES + 1);
+  public float dotProductFromMemorySegmentAligned() {
+    return dotProductFromMemorySegment(alignedSegment, 0, size * Float.BYTES );
   }
 
-  private float dotProductFromMemorySegment(long segmentOffset1, long segmentOffset2) {
+  @Benchmark
+  public float dotProductFromMemorySegmentUnaligned() {
+    return dotProductFromMemorySegment(unalignedSegment, 1, size * Float.BYTES + 1);
+  }
+
+  private float dotProductFromMemorySegment(MemorySegment segment, long segmentOffset1, long segmentOffset2) {
     // Here we are using a single memory segment that holds the data for both vectors.
     // This is similar to what Lucene's MemorySegmentIndexInput would expose (rather
     // than a segment per vector. since segments are immutable and we would not want
@@ -189,12 +222,12 @@ public class FloatDotProductBenchmark {
 
     // tail
     for (; i < length; i++) {
-      res += segment.get(LAYOUT_LE_FLOAT, segmentOffset2 + i * Float.BYTES) * segment.get(LAYOUT_LE_FLOAT, segmentOffset1 + i * Float.BYTES);
+      res += segment.get(LAYOUT_LE_FLOAT_UNALIGNED, segmentOffset2 + i * Float.BYTES) * segment.get(LAYOUT_LE_FLOAT_UNALIGNED, segmentOffset1 + i * Float.BYTES);
     }
     return res;
   }
 
-  @Benchmark
+  // @Benchmark
   public float dotProductOld() {
     if (a.length != b.length) {
       throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
