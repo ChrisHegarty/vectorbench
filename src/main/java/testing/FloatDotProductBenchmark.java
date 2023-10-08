@@ -51,7 +51,7 @@ public class FloatDotProductBenchmark {
     Path p2 = Path.of("vector2.data");
     try (FileChannel fc1 = FileChannel.open(p1, CREATE, READ, WRITE);
          FileChannel fc2 = FileChannel.open(p2, CREATE, READ, WRITE)) {
-      Arena arena = Arena.openShared();
+      Arena arena = Arena.global();
       ByteBuffer buf = ByteBuffer.allocate(size * 2 * Float.BYTES);
       buf.order(LITTLE_ENDIAN);
       buf.asFloatBuffer().put(0, tmpA);
@@ -62,7 +62,7 @@ public class FloatDotProductBenchmark {
       if (n != size * 2 * Float.BYTES) {
         throw new AssertionError("expected n=" + size * 2 * Float.BYTES + ", got:" + n);
       }
-      alignedSegment = fc1.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES, arena.scope());
+      alignedSegment = fc1.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES, arena);
 
       // create the file/segment with unaligned data
       n = fc2.write(ByteBuffer.wrap(new byte[] { 0x00 }));
@@ -73,7 +73,7 @@ public class FloatDotProductBenchmark {
       if (n != size * 2 * Float.BYTES) {
         throw new AssertionError("expected n=" + size * 2 * Float.BYTES + ", got:" + n);
       }
-      unalignedSegment = fc2.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES + 1, arena.scope());
+      unalignedSegment = fc2.map(FileChannel.MapMode.READ_ONLY, 0, size * 2L * Float.BYTES + 1, arena);
     }
 
     // Thread local buffers
@@ -294,5 +294,11 @@ public class FloatDotProductBenchmark {
               + b[i + 7] * a[i + 7];
     }
     return res;
+  }
+
+  public static void main(String... args) throws Exception {
+    var x = new FloatDotProductBenchmark();
+    x.size = 1024; // 1024;
+    x.init();
   }
 }
